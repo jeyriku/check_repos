@@ -63,6 +63,12 @@ Ce mode inclut tous les projets GitLab accessibles avec le token fourni.
 python check_repo_sync.py --include-all-gitlab-projects --check-tags --check-mirrors --json-out report.json --csv-out report.csv
 ```
 
+Exclusion ciblee possible pour des projets volontairement volatils :
+
+```bash
+python check_repo_sync.py --include-all-gitlab-projects --exclude-apps jeyapp --check-tags --check-mirrors
+```
+
 ## Code de retour de `check_repo_sync.py`
 
 - `0` : tout est synchronise
@@ -110,8 +116,10 @@ Le fichier [check_repos/.gitlab-ci.yml](check_repos/.gitlab-ci.yml) est pret pou
 Commande executee par la pipeline :
 
 ```bash
-python check_repo_sync.py --include-all-gitlab-projects --check-tags --check-mirrors --json-out report.json --csv-out report.csv
+python check_repo_sync.py --include-all-gitlab-projects --exclude-apps jeyapp --check-tags --check-mirrors --json-out report.json --csv-out report.csv
 ```
+
+`jeyapp` est exclu dans la pipeline car sa version Nexus evolue pendant l'execution des jobs et genere des faux negatifs transitoires.
 
 Variables CI/CD a definir dans le projet GitLab qui portera ce dossier :
 

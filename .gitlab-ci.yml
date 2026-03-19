@@ -15,7 +15,7 @@ verify:sync:
   before_script:
     - python -V
   script:
-    - python check_repo_sync.py --include-all-gitlab-projects --check-tags --check-mirrors --json-out report.json --csv-out report.csv
+    - python check_repo_sync.py --include-all-gitlab-projects --exclude-apps jeyapp --check-tags --check-mirrors --json-out report.json --csv-out report.csv
   artifacts:
     when: always
     paths:

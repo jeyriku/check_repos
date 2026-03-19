@@ -201,6 +201,12 @@ def build_catalog(include_all_gitlab_projects: bool) -> list[AppConfig]:
     return catalog
 
 
+def parse_excluded_apps(raw_value: str | None) -> set[str]:
+    if not raw_value:
+        return set()
+    return {item.strip() for item in raw_value.split(",") if item.strip()}
+
+
 def get_gitlab_version(app: AppConfig) -> str | None:
     pyproject_text = get_gitlab_pyproject_text(app.gitlab_project)
     if pyproject_text is None:
@@ -414,11 +420,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Inclut tous les projets GitLab accessibles, pas seulement les 5 apps packagées",
     )
+    parser.add_argument(
+        "--exclude-apps",
+        default=os.getenv("CHECK_REPOS_EXCLUDE_APPS", ""),
+        help="Liste d'applications a exclure, separees par des virgules",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    excluded_apps = parse_excluded_apps(args.exclude_apps)
 
     if not GITLAB_TOKEN:
         print("Erreur: variable GITLAB_TOKEN absente.", file=sys.stderr)
@@ -433,6 +445,8 @@ def main() -> int:
     mirrors_failed = False
 
     for app in build_catalog(args.include_all_gitlab_projects):
+        if app.label in excluded_apps:
+            continue
         gitlab_version = get_gitlab_version(app)
         github_version = get_github_version(app)
         nexus_version = get_nexus_version(app)
