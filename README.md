@@ -1,31 +1,30 @@
-# check_repos
+# check-repos
 
-Scripts de verification de synchronisation entre GitLab, GitHub et Nexus.
+Package Python de vérification de synchronisation entre GitLab, GitHub et Nexus.
 
-Le dossier contient a la fois :
+## Structure
 
-- un controle cible sur les applications packagées
-- un mode d'inventaire complet de tous les projets GitLab accessibles
-- une pipeline GitLab prete a l'emploi pour automatiser les verifications
+```
+check_repos/
+├── check_repos/
+│   ├── __init__.py
+│   ├── credentials.py   ← chargement via jeyriku-vault
+│   ├── sync.py          ← vérification versions, tags, mirrors
+│   ├── mirrors.py       ← configuration remote mirrors GitLab -> GitHub
+│   └── tags.py          ← création tags GitLab et GitHub
+├── tests/
+│   └── test_sync.py
+├── pyproject.toml
+└── README.md
+```
 
-## Contenu
-
-- `check_repo_sync.py` : verifie les versions, les tags et les remote mirrors GitLab -> GitHub.
-- `configure_gitlab_github_mirrors.py` : inventorie, cree et synchronise les remote mirrors GitLab -> GitHub.
-- `create_release_tags.py` : cree les tags GitLab et GitHub correspondant aux versions de release des applications suivies.
-- `.gitlab-ci.yml` : pipeline GitLab pour automatiser le controle.
-- `report.json` : dernier rapport JSON genere.
-- `report.csv` : dernier rapport CSV genere.
-
-## Environnement
-
-Un environnement virtuel dedie est present dans `venv/`.
-
-Activation :
+## Installation
 
 ```bash
-cd /Users/jeremierouzet/Documents/Dev/check_repos
+cd check_repos
+python -m venv venv
 source venv/bin/activate
+pip install -e .
 ```
 
 ## Identifiants
@@ -50,104 +49,56 @@ jeyriku-vault set nexus --username admin --password VOTRE_MDP_NEXUS
 
 En environnement CI, définir la variable `VAULT_MASTER_PASSWORD` avec le mot de passe maître du vault.
 
-## Verification complete
+## Utilisation
+
+### Vérification de synchronisation
 
 ```bash
-python check_repo_sync.py --check-tags --check-mirrors --json-out report.json --csv-out report.csv
+check-repos
+check-repos --check-tags --check-mirrors --json-out report.json --csv-out report.csv
+check-repos --include-all-gitlab-projects --exclude-apps jeyapp --check-tags --check-mirrors
 ```
 
-## Verification de tous les projets GitLab
-
-Ce mode inclut tous les projets GitLab accessibles avec le token fourni.
-
-- pour les projets packagés Python : verification versions, tags et mirrors
-- pour les projets sans `pyproject.toml` : verification du mirror GitHub, et statut `SKIPPED` pour versions/tags
+### Configuration des mirrors GitHub
 
 ```bash
-python check_repo_sync.py --include-all-gitlab-projects --check-tags --check-mirrors --json-out report.json --csv-out report.csv
+configure-mirrors                              # dry-run
+configure-mirrors --apply
+configure-mirrors --apply --create-missing-github --sync
 ```
 
-Exclusion ciblee possible pour des projets volontairement volatils :
+### Création des tags de release
 
 ```bash
-python check_repo_sync.py --include-all-gitlab-projects --exclude-apps jeyapp --check-tags --check-mirrors
+create-tags
 ```
 
-## Code de retour de `check_repo_sync.py`
-
-- `0` : tout est synchronise
-- `1` : probleme sur les versions
-- `2` : probleme sur les tags
-- `4` : probleme sur les mirrors GitHub
-
-Les valeurs se cumulent :
-
-- `3` = versions + tags
-- `5` = versions + mirrors
-- `6` = tags + mirrors
-- `7` = versions + tags + mirrors
-
-## Configuration des mirrors GitHub
-
-### Inventaire sans modification
+## Variables optionnelles (non-sensibles)
 
 ```bash
-python configure_gitlab_github_mirrors.py
+export GITLAB_BASE_URL="http://jeysrv12:8090"   # défaut
+export GITHUB_OWNER="jeyriku"                   # défaut
+export NEXUS_BASE_URL="http://jeysrv12:8081"    # défaut
+export NEXUS_REPOSITORY="pypi-releases"         # défaut
 ```
 
-### Creation effective des mirrors
+## Tests
 
 ```bash
-python configure_gitlab_github_mirrors.py --apply
+python -m pytest tests/ -v
 ```
 
-### Creation des repos GitHub manquants + synchro immediate
+## Code de retour de `check-repos`
 
-```bash
-python configure_gitlab_github_mirrors.py --apply --create-missing-github --sync
-```
+- `0` : tout est synchronisé
+- `1` : problème sur les versions
+- `2` : problème sur les tags
+- `4` : problème sur les mirrors GitHub
 
-## Creation des tags de release
-
-```bash
-python create_release_tags.py
-```
+Les valeurs se cumulent (ex: `3` = versions + tags).
 
 ## Pipeline GitLab
 
-Le fichier [check_repos/.gitlab-ci.yml](check_repos/.gitlab-ci.yml) est pret pour une execution automatique dans GitLab.
+Voir [.gitlab-ci.yml](.gitlab-ci.yml). Variable CI/CD à définir :
 
-Commande executee par la pipeline :
-
-```bash
-python check_repo_sync.py --include-all-gitlab-projects --exclude-apps jeyapp --check-tags --check-mirrors --json-out report.json --csv-out report.csv
-```
-
-`jeyapp` est exclu dans la pipeline car sa version Nexus evolue pendant l'execution des jobs et genere des faux negatifs transitoires.
-
-Variables CI/CD à définir dans le projet GitLab qui portera ce dossier :
-
-- `VAULT_MASTER_PASSWORD` : mot de passe maître du vault jeyriku-vault
-
-Les rapports `report.json` et `report.csv` sont publies en artifacts.
-
-Le dossier `check_repos` n'est pas encore un depot Git autonome. Pour activer cette pipeline, il faut soit :
-
-- versionner ce dossier dans un depot GitLab dedie
-- ou l'integrer dans un depot GitLab existant
-
-## Etat attendu actuel
-
-Pour les 5 applications suivies :
-
-- versions GitLab : OK
-- versions GitHub : OK
-- versions Nexus : OK
-- tags GitLab : OK
-- tags GitHub : OK
-- mirrors GitLab -> GitHub : OK
-
-Pour les autres projets GitLab :
-
-- mirror GitHub : attendu OK
-- versions/tags : `SKIPPED` si le projet n'est pas un package Python avec `pyproject.toml`
+- `VAULT_MASTER_PASSWORD` (Protected + Masked)

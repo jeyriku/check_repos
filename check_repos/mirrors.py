@@ -1,23 +1,4 @@
-#!/usr/bin/env python3
-"""Inventorie et configure les remote mirrors GitLab -> GitHub.
-
-Par défaut, le script fonctionne en dry-run.
-Il essaie de faire correspondre chaque projet GitLab avec un dépôt GitHub du même nom.
-
-Usage:
-  source venv/bin/activate
-  python configure_gitlab_github_mirrors.py
-  python configure_gitlab_github_mirrors.py --apply
-
-Les identifiants (GITLAB_TOKEN, GITHUB_PUSH_TOKEN) sont chargés depuis jeyriku-vault.
-En environnement CI, définir VAULT_MASTER_PASSWORD.
-
-Variables optionnelles (non-sensibles) :
-  GITLAB_BASE_URL          défaut: http://jeysrv12:8090
-  GITHUB_OWNER             défaut: jeyriku
-  GITHUB_USERNAME          défaut: jeyriku
-  GITHUB_NEW_REPOS_PRIVATE défaut: false
-"""
+"""Inventorie et configure les remote mirrors GitLab -> GitHub."""
 
 from __future__ import annotations
 
@@ -29,37 +10,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from .credentials import load as load_credentials
+
 GITLAB_BASE_URL = os.getenv("GITLAB_BASE_URL", "http://jeysrv12:8090").rstrip("/")
 GITHUB_OWNER = os.getenv("GITHUB_OWNER", "jeyriku")
 GITHUB_USERNAME = os.getenv("GITHUB_USERNAME", "jeyriku")
 GITHUB_NEW_REPOS_PRIVATE = os.getenv("GITHUB_NEW_REPOS_PRIVATE", "false").lower() == "true"
 TIMEOUT = 20
-
-
-def _load_credentials() -> tuple[str, str]:
-    """Charge les identifiants depuis jeyriku-vault."""
-    from jeyriku_vault import VaultManager
-    vault = VaultManager()
-    if not vault.is_initialized():
-        raise SystemExit("Vault non initialisé. Lancez 'jeyriku-vault init' d'abord.")
-    vault.unlock(os.getenv("VAULT_MASTER_PASSWORD"))
-    try:
-        gitlab_token = ""
-        github_push_token = ""
-        try:
-            gitlab_token = vault.get_credential("gitlab").token or ""
-        except Exception:
-            pass
-        try:
-            github_push_token = vault.get_credential("github").token or ""
-        except Exception:
-            pass
-        return gitlab_token, github_push_token
-    finally:
-        vault.lock()
-
-
-GITLAB_TOKEN, GITHUB_PUSH_TOKEN = _load_credentials()
 
 
 def fetch_json(url: str, headers: dict[str, str] | None = None, data: bytes | None = None, method: str | None = None):
@@ -68,23 +25,23 @@ def fetch_json(url: str, headers: dict[str, str] | None = None, data: bytes | No
         return json.loads(response.read().decode("utf-8"))
 
 
-def gitlab_headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {GITLAB_TOKEN}", "Content-Type": "application/json"}
+def gitlab_headers(gitlab_token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {gitlab_token}", "Content-Type": "application/json"}
 
 
-def github_headers() -> dict[str, str]:
+def github_headers(github_token: str) -> dict[str, str]:
     headers = {"Accept": "application/vnd.github+json"}
-    if GITHUB_PUSH_TOKEN:
-        headers["Authorization"] = f"Bearer {GITHUB_PUSH_TOKEN}"
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
     return headers
 
 
-def get_projects() -> list[dict]:
+def get_projects(gitlab_token: str) -> list[dict]:
     projects = []
     page = 1
     while True:
         url = f"{GITLAB_BASE_URL}/api/v4/projects?membership=true&simple=true&per_page=100&page={page}"
-        data = fetch_json(url, headers=gitlab_headers())
+        data = fetch_json(url, headers=gitlab_headers(gitlab_token))
         if not data:
             break
         projects.extend(data)
@@ -92,10 +49,10 @@ def get_projects() -> list[dict]:
     return projects
 
 
-def github_repo_exists(repo_name: str) -> bool:
+def github_repo_exists(repo_name: str, github_token: str) -> bool:
     url = f"https://api.github.com/repos/{GITHUB_OWNER}/{repo_name}"
     try:
-        fetch_json(url, headers=github_headers())
+        fetch_json(url, headers=github_headers(github_token))
         return True
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
@@ -103,7 +60,7 @@ def github_repo_exists(repo_name: str) -> bool:
         raise
 
 
-def create_github_repo(repo_name: str) -> dict:
+def create_github_repo(repo_name: str, github_token: str) -> dict:
     payload = {
         "name": repo_name,
         "private": GITHUB_NEW_REPOS_PRIVATE,
@@ -112,23 +69,22 @@ def create_github_repo(repo_name: str) -> dict:
         "has_projects": True,
         "has_wiki": True,
     }
-    url = "https://api.github.com/user/repos"
     return fetch_json(
-        url,
-        headers={**github_headers(), "Content-Type": "application/json"},
+        "https://api.github.com/user/repos",
+        headers={**github_headers(github_token), "Content-Type": "application/json"},
         data=json.dumps(payload).encode("utf-8"),
         method="POST",
     )
 
 
-def get_remote_mirrors(project_id: int) -> list[dict]:
+def get_remote_mirrors(project_id: int, gitlab_token: str) -> list[dict]:
     url = f"{GITLAB_BASE_URL}/api/v4/projects/{project_id}/remote_mirrors"
-    data = fetch_json(url, headers=gitlab_headers())
+    data = fetch_json(url, headers=gitlab_headers(gitlab_token))
     return data if isinstance(data, list) else []
 
 
-def create_remote_mirror(project_id: int, repo_name: str) -> dict:
-    mirror_url = f"https://{GITHUB_USERNAME}:{GITHUB_PUSH_TOKEN}@github.com/{GITHUB_OWNER}/{repo_name}.git"
+def create_remote_mirror(project_id: int, repo_name: str, gitlab_token: str, github_token: str) -> dict:
+    mirror_url = f"https://{GITHUB_USERNAME}:{github_token}@github.com/{GITHUB_OWNER}/{repo_name}.git"
     payload = {
         "url": mirror_url,
         "enabled": True,
@@ -137,12 +93,12 @@ def create_remote_mirror(project_id: int, repo_name: str) -> dict:
         "auth_method": "password",
     }
     url = f"{GITLAB_BASE_URL}/api/v4/projects/{project_id}/remote_mirrors"
-    return fetch_json(url, headers=gitlab_headers(), data=json.dumps(payload).encode("utf-8"), method="POST")
+    return fetch_json(url, headers=gitlab_headers(gitlab_token), data=json.dumps(payload).encode("utf-8"), method="POST")
 
 
-def sync_remote_mirror(project_id: int, mirror_id: int) -> bool:
+def sync_remote_mirror(project_id: int, mirror_id: int, gitlab_token: str) -> bool:
     url = f"{GITLAB_BASE_URL}/api/v4/projects/{project_id}/remote_mirrors/{mirror_id}/sync"
-    req = urllib.request.Request(url, headers=gitlab_headers(), data=b"", method="POST")
+    req = urllib.request.Request(url, headers=gitlab_headers(gitlab_token), data=b"", method="POST")
     with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
         return response.status == 204
 
@@ -150,47 +106,39 @@ def sync_remote_mirror(project_id: int, mirror_id: int) -> bool:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Configure les mirrors GitLab -> GitHub")
     parser.add_argument("--apply", action="store_true", help="Crée réellement les mirrors")
-    parser.add_argument(
-        "--create-missing-github",
-        action="store_true",
-        help="Crée les repos GitHub manquants avant de créer le mirror",
-    )
-    parser.add_argument(
-        "--sync",
-        action="store_true",
-        help="Déclenche une synchronisation immédiate des mirrors GitHub",
-    )
+    parser.add_argument("--create-missing-github", action="store_true", help="Crée les repos GitHub manquants")
+    parser.add_argument("--sync", action="store_true", help="Déclenche une synchronisation immédiate")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    creds = load_credentials()
 
-    if not GITLAB_TOKEN:
-        print("Erreur: GITLAB_TOKEN absent", file=sys.stderr)
+    if not creds.gitlab_token:
+        print("Erreur: credential 'gitlab' absent du vault.", file=sys.stderr)
+        return 2
+    if args.apply and not creds.github_token:
+        print("Erreur: credential 'github' absent du vault pour --apply.", file=sys.stderr)
         return 2
 
-    if args.apply and not GITHUB_PUSH_TOKEN:
-        print("Erreur: GITHUB_PUSH_TOKEN absent pour --apply", file=sys.stderr)
-        return 2
-
-    for project in sorted(get_projects(), key=lambda item: item["id"]):
+    for project in sorted(get_projects(creds.gitlab_token), key=lambda item: item["id"]):
         path = project["path"]
         namespace = project["path_with_namespace"]
         project_id = project["id"]
 
         try:
-            github_exists = github_repo_exists(path)
+            github_exists = github_repo_exists(path, creds.github_token)
         except Exception as exc:
             print(f"{namespace}: erreur GitHub -> {exc}")
             continue
 
-        mirrors = get_remote_mirrors(project_id)
+        mirrors = get_remote_mirrors(project_id, creds.gitlab_token)
         github_mirror = next((m for m in mirrors if "github.com" in m.get("url", "")), None)
 
         if github_mirror:
             if args.apply and args.sync:
-                sync_remote_mirror(project_id, github_mirror["id"])
+                sync_remote_mirror(project_id, github_mirror["id"], creds.gitlab_token)
                 print(f"{namespace}: mirror GitHub déjà présent, synchro déclenchée")
             else:
                 print(f"{namespace}: mirror GitHub déjà présent ({github_mirror.get('update_status', 'unknown')})")
@@ -203,7 +151,7 @@ def main() -> int:
             if not args.apply:
                 print(f"{namespace}: repo GitHub manquant -> création possible (dry-run)")
                 continue
-            created_repo = create_github_repo(path)
+            created_repo = create_github_repo(path, creds.github_token)
             print(f"{namespace}: repo GitHub créé ({created_repo.get('html_url')})")
             github_exists = True
 
@@ -215,9 +163,9 @@ def main() -> int:
             print(f"{namespace}: mirror GitHub possible -> https://github.com/{GITHUB_OWNER}/{path} (dry-run)")
             continue
 
-        created = create_remote_mirror(project_id, path)
+        created = create_remote_mirror(project_id, path, creds.gitlab_token, creds.github_token)
         if args.sync:
-            sync_remote_mirror(project_id, created["id"])
+            sync_remote_mirror(project_id, created["id"], creds.gitlab_token)
             print(f"{namespace}: mirror créé (id={created.get('id')}) + synchro déclenchée")
         else:
             print(f"{namespace}: mirror créé (id={created.get('id')})")

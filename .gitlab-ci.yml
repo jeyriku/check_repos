@@ -16,7 +16,8 @@ verify:sync:
     - python -V
     - pip install jeyriku-vault
   script:
-    - python check_repo_sync.py --include-all-gitlab-projects --exclude-apps jeyapp --check-tags --check-mirrors --json-out report.json --csv-out report.csv
+    - pip install -e .
+    - check-repos --include-all-gitlab-projects --exclude-apps jeyapp --check-tags --check-mirrors --json-out report.json --csv-out report.csv
   artifacts:
     when: always
     paths:

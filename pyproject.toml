@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "check-repos"
+version = "0.1.0"
+description = "Vérifie la synchronisation de version entre GitLab, GitHub et Nexus"
+authors = [{name = "Jeremie Rouzet", email = "contact@jeyriku.net"}]
+requires-python = ">=3.9"
+dependencies = [
+    "jeyriku-vault",
+]
+
+[project.scripts]
+check-repos        = "check_repos.sync:main"
+configure-mirrors  = "check_repos.mirrors:main"
+create-tags        = "check_repos.tags:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["check_repos*"]

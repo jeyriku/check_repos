@@ -1,36 +1,4 @@
-#!/usr/bin/env python3
-"""Vérifie la synchronisation de version entre GitLab, GitHub et Nexus.
-
-Le script compare, pour chaque application déclarée ci-dessous :
-- la version présente dans le pyproject.toml sur GitLab
-- la version présente dans le pyproject.toml sur GitHub
-- la dernière version publiée sur Nexus
-
-Options complémentaires :
-- sortie JSON et CSV
-- vérification des tags GitLab et GitHub
-- vérification des remote mirrors GitLab vers GitHub
-
-Code de retour :
-- 0 : tout est synchronisé
-- 1 : problème sur les versions
-- 2 : problème sur les tags
-- 4 : problème sur les mirrors GitHub
-
-Usage:
-  source venv/bin/activate
-  python check_repo_sync.py
-  python check_repo_sync.py --check-tags --json-out report.json --csv-out report.csv
-
-Les identifiants (GITLAB_TOKEN, GITHUB_TOKEN, NEXUS_USERNAME/PASSWORD) sont chargés
-depuis jeyriku-vault. En environnement CI, définir VAULT_MASTER_PASSWORD.
-
-Variables optionnelles (non-sensibles) :
-  GITLAB_BASE_URL   défaut: http://jeysrv12:8090
-  GITHUB_OWNER      défaut: jeyriku
-  NEXUS_BASE_URL    défaut: http://jeysrv12:8081
-  NEXUS_REPOSITORY  défaut: pypi-releases
-"""
+"""Vérifie la synchronisation de version entre GitLab, GitHub et Nexus."""
 
 from __future__ import annotations
 
@@ -47,46 +15,13 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
+from .credentials import load as load_credentials
 
 GITLAB_BASE_URL = os.getenv("GITLAB_BASE_URL", "http://jeysrv12:8090").rstrip("/")
 GITHUB_OWNER = os.getenv("GITHUB_OWNER", "jeyriku")
 NEXUS_BASE_URL = os.getenv("NEXUS_BASE_URL", "http://jeysrv12:8081").rstrip("/")
 NEXUS_REPOSITORY = os.getenv("NEXUS_REPOSITORY", "pypi-releases")
 TIMEOUT = 15
-
-
-def _load_credentials() -> tuple[str, str, str, str]:
-    """Charge les identifiants depuis jeyriku-vault."""
-    from jeyriku_vault import VaultManager
-    vault = VaultManager()
-    if not vault.is_initialized():
-        raise SystemExit("Vault non initialisé. Lancez 'jeyriku-vault init' d'abord.")
-    vault.unlock(os.getenv("VAULT_MASTER_PASSWORD"))
-    try:
-        gitlab_token = ""
-        github_token = ""
-        nexus_username = ""
-        nexus_password = ""
-        try:
-            gitlab_token = vault.get_credential("gitlab").token or ""
-        except Exception:
-            pass
-        try:
-            github_token = vault.get_credential("github").token or ""
-        except Exception:
-            pass
-        try:
-            nexus = vault.get_credential("nexus")
-            nexus_username = nexus.username or ""
-            nexus_password = nexus.password or ""
-        except Exception:
-            pass
-        return gitlab_token, github_token, nexus_username, nexus_password
-    finally:
-        vault.lock()
-
-
-GITLAB_TOKEN, GITHUB_TOKEN, NEXUS_USERNAME, NEXUS_PASSWORD = _load_credentials()
 
 
 @dataclass(frozen=True)
@@ -162,16 +97,15 @@ def normalize_tag(tag_name: str | None) -> str | None:
     if not tag_name:
         return None
     normalized = tag_name.strip()
-    if normalized.lower().startswith("v") and len(normalized) > 1:
+    if normalized.lower().startswith("v"):
         normalized = normalized[1:]
     return normalized or None
 
 
-def get_gitlab_projects() -> list[dict]:
-    if not GITLAB_TOKEN:
+def get_gitlab_projects(gitlab_token: str) -> list[dict]:
+    if not gitlab_token:
         return []
-
-    headers = {"Authorization": f"Bearer {GITLAB_TOKEN}"}
+    headers = {"Authorization": f"Bearer {gitlab_token}"}
     projects: list[dict] = []
     page = 1
     while True:
@@ -184,12 +118,11 @@ def get_gitlab_projects() -> list[dict]:
     return projects
 
 
-def get_gitlab_pyproject_text(project_path: str) -> str | None:
-    if not GITLAB_TOKEN:
+def get_gitlab_pyproject_text(project_path: str, gitlab_token: str) -> str | None:
+    if not gitlab_token:
         return None
-
     encoded_project = urllib.parse.quote(project_path, safe="")
-    headers = {"Authorization": f"Bearer {GITLAB_TOKEN}"}
+    headers = {"Authorization": f"Bearer {gitlab_token}"}
     for branch in ("main", "master"):
         url = (
             f"{GITLAB_BASE_URL}/api/v4/projects/{encoded_project}"
@@ -204,15 +137,15 @@ def get_gitlab_pyproject_text(project_path: str) -> str | None:
     return None
 
 
-def build_catalog(include_all_gitlab_projects: bool) -> list[AppConfig]:
+def build_catalog(include_all_gitlab_projects: bool, gitlab_token: str) -> list[AppConfig]:
     if not include_all_gitlab_projects:
         return APPS
 
     catalog: list[AppConfig] = []
-    for project in sorted(get_gitlab_projects(), key=lambda item: item["id"]):
+    for project in sorted(get_gitlab_projects(gitlab_token), key=lambda item: item["id"]):
         project_path = project["path_with_namespace"]
         repo_name = project["path"]
-        pyproject_text = get_gitlab_pyproject_text(project_path)
+        pyproject_text = get_gitlab_pyproject_text(project_path, gitlab_token)
         package_name: Optional[str] = None
         if pyproject_text:
             try:
@@ -236,21 +169,20 @@ def parse_excluded_apps(raw_value: str | None) -> set[str]:
     return {item.strip() for item in raw_value.split(",") if item.strip()}
 
 
-def get_gitlab_version(app: AppConfig) -> str | None:
-    pyproject_text = get_gitlab_pyproject_text(app.gitlab_project)
+def get_gitlab_version(app: AppConfig, gitlab_token: str) -> str | None:
+    pyproject_text = get_gitlab_pyproject_text(app.gitlab_project, gitlab_token)
     if pyproject_text is None:
         return None
     try:
         return parse_version_from_pyproject(pyproject_text)
     except ValueError:
         return None
-    return None
 
 
-def get_github_version(app: AppConfig) -> str | None:
+def get_github_version(app: AppConfig, github_token: str) -> str | None:
     headers: dict[str, str] = {}
-    if GITHUB_TOKEN:
-        headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
     headers["Accept"] = "application/vnd.github+json"
 
     for branch in ("main", "master"):
@@ -268,12 +200,11 @@ def get_github_version(app: AppConfig) -> str | None:
     return None
 
 
-def get_gitlab_latest_tag(app: AppConfig) -> str | None:
-    if not GITLAB_TOKEN:
+def get_gitlab_latest_tag(app: AppConfig, gitlab_token: str) -> str | None:
+    if not gitlab_token:
         return None
-
     encoded_project = urllib.parse.quote(app.gitlab_project, safe="")
-    headers = {"Authorization": f"Bearer {GITLAB_TOKEN}"}
+    headers = {"Authorization": f"Bearer {gitlab_token}"}
     url = f"{GITLAB_BASE_URL}/api/v4/projects/{encoded_project}/repository/tags?per_page=100"
     payload = fetch_json(url, headers=headers)
     if not isinstance(payload, list):
@@ -282,11 +213,10 @@ def get_gitlab_latest_tag(app: AppConfig) -> str | None:
     return best_version(tag for tag in tags if tag)
 
 
-def get_github_latest_tag(app: AppConfig) -> str | None:
+def get_github_latest_tag(app: AppConfig, github_token: str) -> str | None:
     headers: dict[str, str] = {}
-    if GITHUB_TOKEN:
-        headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
-
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
     url = f"https://api.github.com/repos/{GITHUB_OWNER}/{app.github_repo}/tags?per_page=100"
     try:
         payload = fetch_json(url, headers=headers)
@@ -294,26 +224,24 @@ def get_github_latest_tag(app: AppConfig) -> str | None:
         if exc.code == 404:
             return None
         raise
-
     if not isinstance(payload, list):
         return None
     tags = [normalize_tag(item.get("name")) for item in payload]
     return best_version(tag for tag in tags if tag)
 
 
-def get_gitlab_remote_mirrors(app: AppConfig) -> list[dict]:
-    if not GITLAB_TOKEN:
+def get_gitlab_remote_mirrors(app: AppConfig, gitlab_token: str) -> list[dict]:
+    if not gitlab_token:
         return []
-
     encoded_project = urllib.parse.quote(app.gitlab_project, safe="")
-    headers = {"Authorization": f"Bearer {GITLAB_TOKEN}"}
+    headers = {"Authorization": f"Bearer {gitlab_token}"}
     url = f"{GITLAB_BASE_URL}/api/v4/projects/{encoded_project}/remote_mirrors"
     payload = fetch_json(url, headers=headers)
     return payload if isinstance(payload, list) else []
 
 
-def extract_github_mirror_status(app: AppConfig) -> tuple[str, str, str]:
-    mirrors = get_gitlab_remote_mirrors(app)
+def extract_github_mirror_status(app: AppConfig, gitlab_token: str) -> tuple[str, str, str]:
+    mirrors = get_gitlab_remote_mirrors(app, gitlab_token)
     for mirror in mirrors:
         url = mirror.get("url", "")
         if "github.com" not in url:
@@ -327,11 +255,10 @@ def extract_github_mirror_status(app: AppConfig) -> tuple[str, str, str]:
     return "NO", "missing", "MISSING"
 
 
-def get_nexus_version(app: AppConfig) -> str | None:
+def get_nexus_version(app: AppConfig, nexus_username: str, nexus_password: str) -> str | None:
     if not app.package_name:
         return None
-
-    auth = base64.b64encode(f"{NEXUS_USERNAME}:{NEXUS_PASSWORD}".encode("utf-8")).decode("ascii")
+    auth = base64.b64encode(f"{nexus_username}:{nexus_password}".encode("utf-8")).decode("ascii")
     headers = {"Authorization": f"Basic {auth}"}
     url = (
         f"{NEXUS_BASE_URL}/service/rest/v1/search?repository={NEXUS_REPOSITORY}"
@@ -355,22 +282,16 @@ def source_status(found: str | None, expected: str | None) -> str:
 
 def build_headers(include_tags: bool) -> list[str]:
     headers = [
-        "app",
-        "expected",
-        "gitlab",
-        "gitlab_status",
-        "github",
-        "github_status",
-        "nexus",
-        "nexus_status",
+        "app", "expected",
+        "gitlab", "gitlab_status",
+        "github", "github_status",
+        "nexus", "nexus_status",
         "versions_sync",
     ]
     if include_tags:
         headers.extend([
-            "gitlab_tag",
-            "gitlab_tag_status",
-            "github_tag",
-            "github_tag_status",
+            "gitlab_tag", "gitlab_tag_status",
+            "github_tag", "github_tag_status",
             "tags_sync",
         ])
     return headers
@@ -426,77 +347,54 @@ def write_csv(rows: list[dict[str, str]], headers: list[str], output_path: str) 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Vérifie la synchro GitLab / GitHub / Nexus")
-    parser.add_argument(
-        "--check-tags",
-        action="store_true",
-        help="Vérifie aussi les tags GitLab et GitHub",
-    )
-    parser.add_argument(
-        "--json-out",
-        help="Chemin de sortie JSON pour le rapport",
-    )
-    parser.add_argument(
-        "--csv-out",
-        help="Chemin de sortie CSV pour le rapport",
-    )
-    parser.add_argument(
-        "--check-mirrors",
-        action="store_true",
-        help="Vérifie aussi la présence et l'état des remote mirrors GitHub côté GitLab",
-    )
-    parser.add_argument(
-        "--include-all-gitlab-projects",
-        action="store_true",
-        help="Inclut tous les projets GitLab accessibles, pas seulement les 5 apps packagées",
-    )
-    parser.add_argument(
-        "--exclude-apps",
-        default=os.getenv("CHECK_REPOS_EXCLUDE_APPS", ""),
-        help="Liste d'applications a exclure, separees par des virgules",
-    )
+    parser.add_argument("--check-tags", action="store_true", help="Vérifie aussi les tags GitLab et GitHub")
+    parser.add_argument("--check-mirrors", action="store_true", help="Vérifie aussi les remote mirrors GitHub")
+    parser.add_argument("--include-all-gitlab-projects", action="store_true", help="Inclut tous les projets GitLab")
+    parser.add_argument("--exclude-apps", default=os.getenv("CHECK_REPOS_EXCLUDE_APPS", ""), help="Apps à exclure (virgules)")
+    parser.add_argument("--json-out", help="Chemin de sortie JSON")
+    parser.add_argument("--csv-out", help="Chemin de sortie CSV")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    creds = load_credentials()
+
+    if not creds.gitlab_token:
+        print("Erreur: credential 'gitlab' absent du vault.", file=sys.stderr)
+        return 2
+    if not creds.nexus_username or not creds.nexus_password:
+        print("Erreur: credential 'nexus' absent du vault.", file=sys.stderr)
+        return 2
+
     excluded_apps = parse_excluded_apps(args.exclude_apps)
-
-    if not GITLAB_TOKEN:
-        print("Erreur: variable GITLAB_TOKEN absente.", file=sys.stderr)
-        return 2
-    if not NEXUS_USERNAME or not NEXUS_PASSWORD:
-        print("Erreur: variables NEXUS_USERNAME/NEXUS_PASSWORD absentes.", file=sys.stderr)
-        return 2
-
     rows: list[dict[str, str]] = []
     versions_failed = False
     tags_failed = False
     mirrors_failed = False
 
-    for app in build_catalog(args.include_all_gitlab_projects):
+    for app in build_catalog(args.include_all_gitlab_projects, creds.gitlab_token):
         if app.label in excluded_apps:
             continue
-        gitlab_version = get_gitlab_version(app)
-        github_version = get_github_version(app)
-        nexus_version = get_nexus_version(app)
+
+        gitlab_version = get_gitlab_version(app, creds.gitlab_token)
+        github_version = get_github_version(app, creds.github_token)
+        nexus_version = get_nexus_version(app, creds.nexus_username, creds.nexus_password)
         expected = best_version([gitlab_version, github_version, nexus_version])
 
         if expected is None:
-            gitlab_status = "SKIPPED"
-            github_status = "SKIPPED"
-            nexus_status = "SKIPPED"
+            gitlab_status = github_status = nexus_status = "SKIPPED"
             versions_sync = "SKIPPED"
         else:
             gitlab_status = source_status(gitlab_version, expected)
             github_status = source_status(github_version, expected)
             nexus_status = source_status(nexus_version, expected)
-            versions_sync = "YES" if all(status == "OK" for status in (gitlab_status, github_status, nexus_status)) else "NO"
+            versions_sync = "YES" if all(s == "OK" for s in (gitlab_status, github_status, nexus_status)) else "NO"
 
-        if versions_sync != "YES":
-            if versions_sync != "SKIPPED":
-                versions_failed = True
+        if versions_sync == "NO":
+            versions_failed = True
 
-        row = {
+        row: dict[str, str] = {
             "app": app.label,
             "expected": expected or "n/a",
             "gitlab": gitlab_version or "n/a",
@@ -509,43 +407,35 @@ def main() -> int:
         }
 
         if args.check_tags:
-            gitlab_tag = get_gitlab_latest_tag(app)
-            github_tag = get_github_latest_tag(app)
-            expected_tag = best_version([value for value in [expected, gitlab_tag, github_tag] if value])
+            gitlab_tag = get_gitlab_latest_tag(app, creds.gitlab_token)
+            github_tag = get_github_latest_tag(app, creds.github_token)
+            expected_tag = best_version([v for v in [expected, gitlab_tag, github_tag] if v])
             if expected_tag is None:
-                gitlab_tag_status = "SKIPPED"
-                github_tag_status = "SKIPPED"
+                gitlab_tag_status = github_tag_status = "SKIPPED"
                 tags_sync = "SKIPPED"
             else:
                 gitlab_tag_status = source_status(gitlab_tag, expected_tag)
                 github_tag_status = source_status(github_tag, expected_tag)
-                tags_sync = "YES" if all(status == "OK" for status in (gitlab_tag_status, github_tag_status)) else "NO"
-
-            if tags_sync != "YES":
-                if tags_sync != "SKIPPED":
-                    tags_failed = True
-
-            row.update(
-                {
-                    "gitlab_tag": gitlab_tag or "n/a",
-                    "gitlab_tag_status": gitlab_tag_status,
-                    "github_tag": github_tag or "n/a",
-                    "github_tag_status": github_tag_status,
-                    "tags_sync": tags_sync,
-                }
-            )
+                tags_sync = "YES" if all(s == "OK" for s in (gitlab_tag_status, github_tag_status)) else "NO"
+            if tags_sync == "NO":
+                tags_failed = True
+            row.update({
+                "gitlab_tag": gitlab_tag or "n/a",
+                "gitlab_tag_status": gitlab_tag_status,
+                "github_tag": github_tag or "n/a",
+                "github_tag_status": github_tag_status,
+                "tags_sync": tags_sync,
+            })
 
         if args.check_mirrors:
-            mirror_enabled, mirror_update_status, mirror_status = extract_github_mirror_status(app)
+            mirror_enabled, mirror_update_status, mirror_status = extract_github_mirror_status(app, creds.gitlab_token)
             if mirror_status != "OK":
                 mirrors_failed = True
-            row.update(
-                {
-                    "github_mirror_enabled": mirror_enabled,
-                    "github_mirror_update_status": mirror_update_status,
-                    "github_mirror_status": mirror_status,
-                }
-            )
+            row.update({
+                "github_mirror_enabled": mirror_enabled,
+                "github_mirror_update_status": mirror_update_status,
+                "github_mirror_status": mirror_status,
+            })
 
         row["overall_sync"] = "YES"
         if row["versions_sync"] not in ("YES", "SKIPPED"):
