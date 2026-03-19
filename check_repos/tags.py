@@ -10,18 +10,9 @@ import urllib.request
 import sys
 
 from .credentials import load as load_credentials
+from .sync import APPS, GITLAB_BASE_URL, GITHUB_OWNER, get_gitlab_pyproject_text, parse_version_from_pyproject
 
-GITLAB_BASE_URL = os.getenv("GITLAB_BASE_URL", "http://jeysrv12:8090").rstrip("/")
-GITHUB_OWNER = os.getenv("GITHUB_OWNER", "jeyriku")
 TIMEOUT = 20
-
-APPS = [
-    {"project_id": 3, "gitlab_project": "jeyriku/checksysvers", "github_repo": "checksysvers", "version": "0.1.2"},
-    {"project_id": 6, "gitlab_project": "jeyriku/infrahub_jeylan", "github_repo": "infrahub_jeylan", "version": "1.0.6"},
-    {"project_id": 9, "gitlab_project": "jeyriku/nexuspush", "github_repo": "nexuspush", "version": "1.0.4"},
-    {"project_id": 4, "gitlab_project": "jeyriku/ipscanner", "github_repo": "ipscanner", "version": "0.1.6"},
-    {"project_id": 10, "gitlab_project": "jeyriku/jeypyats", "github_repo": "jeypyats", "version": "1.2.3"},
-]
 
 
 def fetch_json(url: str, headers: dict[str, str] | None = None, data: bytes | None = None, method: str | None = None):
@@ -39,8 +30,9 @@ def github_headers(github_token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json", "Content-Type": "application/json"}
 
 
-def gitlab_branches(project_id: int, gitlab_token: str) -> list[str]:
-    data = fetch_json(f"{GITLAB_BASE_URL}/api/v4/projects/{project_id}/repository/branches", headers=gitlab_headers(gitlab_token))
+def gitlab_branches(gitlab_project: str, gitlab_token: str) -> list[str]:
+    encoded = urllib.parse.quote(gitlab_project, safe="")
+    data = fetch_json(f"{GITLAB_BASE_URL}/api/v4/projects/{encoded}/repository/branches", headers=gitlab_headers(gitlab_token))
     return [item["name"] for item in data or []]
 
 
@@ -56,10 +48,11 @@ def choose_branch(branches: list[str]) -> str:
     return branches[0]
 
 
-def gitlab_has_tag(project_id: int, tag: str, gitlab_token: str) -> bool:
+def gitlab_has_tag(gitlab_project: str, tag: str, gitlab_token: str) -> bool:
     try:
+        encoded = urllib.parse.quote(gitlab_project, safe="")
         fetch_json(
-            f"{GITLAB_BASE_URL}/api/v4/projects/{project_id}/repository/tags/{urllib.parse.quote(tag, safe='')}",
+            f"{GITLAB_BASE_URL}/api/v4/projects/{encoded}/repository/tags/{urllib.parse.quote(tag, safe='')}",
             headers=gitlab_headers(gitlab_token),
         )
         return True
@@ -82,10 +75,11 @@ def github_has_tag(repo: str, tag: str, github_token: str) -> bool:
         raise
 
 
-def create_gitlab_tag(project_id: int, tag: str, ref: str, gitlab_token: str) -> None:
+def create_gitlab_tag(gitlab_project: str, tag: str, ref: str, gitlab_token: str) -> None:
+    encoded = urllib.parse.quote(gitlab_project, safe="")
     payload = urllib.parse.urlencode({"tag_name": tag, "ref": ref, "message": f"Release {tag}"}).encode("utf-8")
     fetch_json(
-        f"{GITLAB_BASE_URL}/api/v4/projects/{project_id}/repository/tags",
+        f"{GITLAB_BASE_URL}/api/v4/projects/{encoded}/repository/tags",
         headers={"Authorization": f"Bearer {gitlab_token}"},
         data=payload,
         method="POST",
@@ -118,22 +112,30 @@ def main() -> int:
         return 2
 
     for app in APPS:
-        tag = app["version"]
-        gl_branch = choose_branch(gitlab_branches(app["project_id"], creds.gitlab_token))
-        gh_branch = choose_branch(github_branches(app["github_repo"], creds.github_token))
+        pyproject_text = get_gitlab_pyproject_text(app.gitlab_project, creds.gitlab_token)
+        if not pyproject_text:
+            print(f"{app.label}: impossible de lire pyproject.toml depuis GitLab", file=sys.stderr)
+            continue
+        tag = parse_version_from_pyproject(pyproject_text)
+        if not tag:
+            print(f"{app.label}: version introuvable dans pyproject.toml", file=sys.stderr)
+            continue
 
-        if gitlab_has_tag(app["project_id"], tag, creds.gitlab_token):
-            print(f"{app['github_repo']}: tag GitLab {tag} existe déjà")
-        else:
-            create_gitlab_tag(app["project_id"], tag, gl_branch, creds.gitlab_token)
-            print(f"{app['github_repo']}: tag GitLab {tag} créé sur {gl_branch}")
+        gl_branch = choose_branch(gitlab_branches(app.gitlab_project, creds.gitlab_token))
+        gh_branch = choose_branch(github_branches(app.github_repo, creds.github_token))
 
-        if github_has_tag(app["github_repo"], tag, creds.github_token):
-            print(f"{app['github_repo']}: tag GitHub {tag} existe déjà")
+        if gitlab_has_tag(app.gitlab_project, tag, creds.gitlab_token):
+            print(f"{app.label}: tag GitLab {tag} existe déjà")
         else:
-            sha = github_ref_sha(app["github_repo"], gh_branch, creds.github_token)
-            create_github_tag(app["github_repo"], tag, sha, creds.github_token)
-            print(f"{app['github_repo']}: tag GitHub {tag} créé sur {gh_branch}")
+            create_gitlab_tag(app.gitlab_project, tag, gl_branch, creds.gitlab_token)
+            print(f"{app.label}: tag GitLab {tag} créé sur {gl_branch}")
+
+        if github_has_tag(app.github_repo, tag, creds.github_token):
+            print(f"{app.label}: tag GitHub {tag} existe déjà")
+        else:
+            sha = github_ref_sha(app.github_repo, gh_branch, creds.github_token)
+            create_github_tag(app.github_repo, tag, sha, creds.github_token)
+            print(f"{app.label}: tag GitHub {tag} créé sur {gh_branch}")
 
     return 0
 

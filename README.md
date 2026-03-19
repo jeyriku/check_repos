@@ -69,6 +69,10 @@ configure-mirrors --apply --create-missing-github --sync
 
 ### Création des tags de release
 
+`create-tags` lit la version courante depuis le `pyproject.toml` de chaque
+projet sur GitLab, puis crée le tag correspondant sur GitLab **et** GitHub
+si ce tag n'existe pas encore.
+
 ```bash
 create-tags
 ```
