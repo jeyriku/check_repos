@@ -1,0 +1,28 @@
+stages:
+  - verify
+
+variables:
+  PYTHON_VERSION: "3.11"
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+cache:
+  paths:
+    - .cache/pip
+
+verify:sync:
+  stage: verify
+  image: python:${PYTHON_VERSION}-slim
+  before_script:
+    - python -V
+  script:
+    - python check_repo_sync.py --include-all-gitlab-projects --check-tags --check-mirrors --json-out report.json --csv-out report.csv
+  artifacts:
+    when: always
+    paths:
+      - report.json
+      - report.csv
+    expire_in: 1 week
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE == "push"'
