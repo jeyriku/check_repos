@@ -53,10 +53,15 @@ En environnement CI, définir la variable `VAULT_MASTER_PASSWORD` avec le mot de
 
 ### Vérification de synchronisation
 
+Par défaut, `check-repos` découvre automatiquement tous les projets GitLab
+dont vous êtes membre (équivalent de `--include-all-gitlab-projects`).
+Pour utiliser uniquement la liste fixe définie dans le code, passer `--no-auto-discover`.
+
 ```bash
 check-repos
 check-repos --check-tags --check-mirrors --json-out report.json --csv-out report.csv
-check-repos --include-all-gitlab-projects --exclude-apps jeyapp --check-tags --check-mirrors
+check-repos --exclude-apps jeyapp,git-intro --check-tags --check-mirrors
+check-repos --no-auto-discover   # liste fixe uniquement
 ```
 
 ### Configuration des mirrors GitHub

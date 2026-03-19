@@ -38,6 +38,9 @@ APPS: list[AppConfig] = [
     AppConfig("nexuspush", "jeyriku/nexuspush", "nexuspush", "nexuspush"),
     AppConfig("ipscanner", "jeyriku/ipscanner", "ipscanner", "ipscanner"),
     AppConfig("jeypyats", "jeyriku/jeypyats", "jeypyats", "jeypyats"),
+    AppConfig("mypublicip", "jeyriku/mypublicip", "mypublicip", "mypublicip"),
+    AppConfig("jeyriku-vault", "jeyriku/jeyriku-vault", "jeyriku-vault", "jeyriku-vault"),
+    AppConfig("netalps_probe", "jeyriku/netalps_probe", "netalps_probe", "netalps-probe"),
 ]
 
 
@@ -349,7 +352,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Vérifie la synchro GitLab / GitHub / Nexus")
     parser.add_argument("--check-tags", action="store_true", help="Vérifie aussi les tags GitLab et GitHub")
     parser.add_argument("--check-mirrors", action="store_true", help="Vérifie aussi les remote mirrors GitHub")
-    parser.add_argument("--include-all-gitlab-projects", action="store_true", help="Inclut tous les projets GitLab")
+    parser.add_argument("--include-all-gitlab-projects", action="store_true", default=True,
+                        help="Inclut tous les projets GitLab membres (défaut: actif)")
+    parser.add_argument("--no-auto-discover", dest="include_all_gitlab_projects", action="store_false",
+                        help="Utilise uniquement la liste fixe APPS (désactive la découverte GitLab)")
     parser.add_argument("--exclude-apps", default=os.getenv("CHECK_REPOS_EXCLUDE_APPS", ""), help="Apps à exclure (virgules)")
     parser.add_argument("--json-out", help="Chemin de sortie JSON")
     parser.add_argument("--csv-out", help="Chemin de sortie CSV")
