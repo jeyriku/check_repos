@@ -1,0 +1,5 @@
+# Runtime
+jeyriku-vault>=1.0.0
+
+# Dev / tests
+pytest>=7.0.0
