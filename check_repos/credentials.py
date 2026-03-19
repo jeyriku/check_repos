@@ -18,7 +18,7 @@ def load() -> Credentials:
     """Ouvre le vault, récupère tous les identifiants et le referme."""
     from jeyriku_vault import VaultManager
 
-    vault = VaultManager()
+    vault = VaultManager(backend="encrypted_file")
     if not vault.is_initialized():
         raise SystemExit("Vault non initialisé. Lancez 'jeyriku-vault init' d'abord.")
     vault.unlock(os.getenv("VAULT_MASTER_PASSWORD"))
