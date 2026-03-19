@@ -9,11 +9,35 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-GITLAB_TOKEN = os.getenv("GITLAB_TOKEN", "")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITLAB_BASE_URL = os.getenv("GITLAB_BASE_URL", "http://jeysrv12:8090").rstrip("/")
 GITHUB_OWNER = os.getenv("GITHUB_OWNER", "jeyriku")
 TIMEOUT = 20
+
+
+def _load_credentials() -> tuple[str, str]:
+    """Charge les identifiants depuis jeyriku-vault."""
+    from jeyriku_vault import VaultManager
+    vault = VaultManager()
+    if not vault.is_initialized():
+        raise SystemExit("Vault non initialisé. Lancez 'jeyriku-vault init' d'abord.")
+    vault.unlock(os.getenv("VAULT_MASTER_PASSWORD"))
+    try:
+        gitlab_token = ""
+        github_token = ""
+        try:
+            gitlab_token = vault.get_credential("gitlab").token or ""
+        except Exception:
+            pass
+        try:
+            github_token = vault.get_credential("github").token or ""
+        except Exception:
+            pass
+        return gitlab_token, github_token
+    finally:
+        vault.lock()
+
+
+GITLAB_TOKEN, GITHUB_TOKEN = _load_credentials()
 
 APPS = [
     {"project_id": 3, "gitlab_project": "jeyriku/checksysvers", "github_repo": "checksysvers", "version": "0.1.2"},

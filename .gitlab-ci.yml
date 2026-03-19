@@ -14,6 +14,7 @@ verify:sync:
   image: python:${PYTHON_VERSION}-slim
   before_script:
     - python -V
+    - pip install jeyriku-vault
   script:
     - python check_repo_sync.py --include-all-gitlab-projects --exclude-apps jeyapp --check-tags --check-mirrors --json-out report.json --csv-out report.csv
   artifacts:

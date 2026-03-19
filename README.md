@@ -28,23 +28,27 @@ cd /Users/jeremierouzet/Documents/Dev/check_repos
 source venv/bin/activate
 ```
 
-## Variables d'environnement
+## Identifiants
 
-### Pour la verification de synchro
+Les scripts chargent les identifiants depuis **jeyriku-vault** :
+
+| Service vault | Champ       | Utilisation                    |
+|---------------|-------------|--------------------------------|
+| `gitlab`      | `token`     | GITLAB_TOKEN                   |
+| `github`      | `token`     | GITHUB_TOKEN + GITHUB_PUSH_TOKEN |
+| `nexus`       | `username`  | NEXUS_USERNAME                 |
+| `nexus`       | `password`  | NEXUS_PASSWORD                 |
+
+Initialisation du vault (une seule fois) :
 
 ```bash
-export GITLAB_TOKEN="..."
-export NEXUS_USERNAME="admin"
-export NEXUS_PASSWORD="..."
-export GITHUB_TOKEN="..."
+jeyriku-vault init
+jeyriku-vault set gitlab --token VOTRE_TOKEN_GITLAB
+jeyriku-vault set github --username jeyriku --token VOTRE_TOKEN_GITHUB
+jeyriku-vault set nexus --username admin --password VOTRE_MDP_NEXUS
 ```
 
-### Pour la configuration des mirrors GitHub
-
-```bash
-export GITLAB_TOKEN="..."
-export GITHUB_PUSH_TOKEN="..."
-```
+En environnement CI, définir la variable `VAULT_MASTER_PASSWORD` avec le mot de passe maître du vault.
 
 ## Verification complete
 
@@ -121,12 +125,9 @@ python check_repo_sync.py --include-all-gitlab-projects --exclude-apps jeyapp --
 
 `jeyapp` est exclu dans la pipeline car sa version Nexus evolue pendant l'execution des jobs et genere des faux negatifs transitoires.
 
-Variables CI/CD a definir dans le projet GitLab qui portera ce dossier :
+Variables CI/CD à définir dans le projet GitLab qui portera ce dossier :
 
-- `GITLAB_TOKEN`
-- `NEXUS_USERNAME`
-- `NEXUS_PASSWORD`
-- `GITHUB_TOKEN`
+- `VAULT_MASTER_PASSWORD` : mot de passe maître du vault jeyriku-vault
 
 Les rapports `report.json` et `report.csv` sont publies en artifacts.
 

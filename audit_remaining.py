@@ -1,10 +1,19 @@
 import os
 import requests
+from jeyriku_vault import VaultManager
 
-GL=os.environ['GITLAB_TOKEN']
-GH=os.environ['GITHUB_TOKEN']
-NEXUS_USERNAME=os.environ['NEXUS_USERNAME']
-NEXUS_PASSWORD=os.environ['NEXUS_PASSWORD']
+_vault = VaultManager()
+if not _vault.is_initialized():
+    raise SystemExit("Vault non initialisé. Lancez 'jeyriku-vault init' d'abord.")
+_vault.unlock(os.getenv("VAULT_MASTER_PASSWORD"))
+try:
+    GL = _vault.get_credential("gitlab").token or ""
+    GH = _vault.get_credential("github").token or ""
+    _nexus = _vault.get_credential("nexus")
+    NEXUS_USERNAME = _nexus.username or ""
+    NEXUS_PASSWORD = _nexus.password or ""
+finally:
+    _vault.lock()
 BASE='http://jeysrv12:8090/api/v4'
 glh={'Authorization': f'Bearer {GL}'}
 ghh={'Authorization': f'Bearer {GH}', 'Accept': 'application/vnd.github+json'}

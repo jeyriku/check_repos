@@ -18,19 +18,18 @@ Code de retour :
 - 4 : problème sur les mirrors GitHub
 
 Usage:
-  export GITLAB_TOKEN="..."
-  export NEXUS_USERNAME="admin"
-  export NEXUS_PASSWORD="..."
   source venv/bin/activate
   python check_repo_sync.py
   python check_repo_sync.py --check-tags --json-out report.json --csv-out report.csv
 
-Variables optionnelles:
+Les identifiants (GITLAB_TOKEN, GITHUB_TOKEN, NEXUS_USERNAME/PASSWORD) sont chargés
+depuis jeyriku-vault. En environnement CI, définir VAULT_MASTER_PASSWORD.
+
+Variables optionnelles (non-sensibles) :
   GITLAB_BASE_URL   défaut: http://jeysrv12:8090
   GITHUB_OWNER      défaut: jeyriku
   NEXUS_BASE_URL    défaut: http://jeysrv12:8081
   NEXUS_REPOSITORY  défaut: pypi-releases
-  GITHUB_TOKEN      optionnel, utile si rate limiting GitHub
 """
 
 from __future__ import annotations
@@ -50,14 +49,44 @@ from typing import Iterable, Optional
 
 
 GITLAB_BASE_URL = os.getenv("GITLAB_BASE_URL", "http://jeysrv12:8090").rstrip("/")
-GITLAB_TOKEN = os.getenv("GITLAB_TOKEN", "")
 GITHUB_OWNER = os.getenv("GITHUB_OWNER", "jeyriku")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 NEXUS_BASE_URL = os.getenv("NEXUS_BASE_URL", "http://jeysrv12:8081").rstrip("/")
 NEXUS_REPOSITORY = os.getenv("NEXUS_REPOSITORY", "pypi-releases")
-NEXUS_USERNAME = os.getenv("NEXUS_USERNAME", "")
-NEXUS_PASSWORD = os.getenv("NEXUS_PASSWORD", "")
 TIMEOUT = 15
+
+
+def _load_credentials() -> tuple[str, str, str, str]:
+    """Charge les identifiants depuis jeyriku-vault."""
+    from jeyriku_vault import VaultManager
+    vault = VaultManager()
+    if not vault.is_initialized():
+        raise SystemExit("Vault non initialisé. Lancez 'jeyriku-vault init' d'abord.")
+    vault.unlock(os.getenv("VAULT_MASTER_PASSWORD"))
+    try:
+        gitlab_token = ""
+        github_token = ""
+        nexus_username = ""
+        nexus_password = ""
+        try:
+            gitlab_token = vault.get_credential("gitlab").token or ""
+        except Exception:
+            pass
+        try:
+            github_token = vault.get_credential("github").token or ""
+        except Exception:
+            pass
+        try:
+            nexus = vault.get_credential("nexus")
+            nexus_username = nexus.username or ""
+            nexus_password = nexus.password or ""
+        except Exception:
+            pass
+        return gitlab_token, github_token, nexus_username, nexus_password
+    finally:
+        vault.lock()
+
+
+GITLAB_TOKEN, GITHUB_TOKEN, NEXUS_USERNAME, NEXUS_PASSWORD = _load_credentials()
 
 
 @dataclass(frozen=True)

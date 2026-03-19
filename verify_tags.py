@@ -2,9 +2,17 @@ import json
 import os
 import urllib.parse
 import urllib.request
+from jeyriku_vault import VaultManager
 
-GL=os.environ['GITLAB_TOKEN']
-GH=os.environ['GITHUB_TOKEN']
+_vault = VaultManager()
+if not _vault.is_initialized():
+    raise SystemExit("Vault non initialisé. Lancez 'jeyriku-vault init' d'abord.")
+_vault.unlock(os.getenv("VAULT_MASTER_PASSWORD"))
+try:
+    GL = _vault.get_credential("gitlab").token or ""
+    GH = _vault.get_credential("github").token or ""
+finally:
+    _vault.lock()
 BASE='http://jeysrv12:8090/api/v4'
 APPS=[(3,'checksysvers'),(6,'infrahub_jeylan'),(9,'nexuspush'),(4,'ipscanner'),(10,'jeypyats')]
 

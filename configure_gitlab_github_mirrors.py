@@ -6,16 +6,17 @@ Il essaie de faire correspondre chaque projet GitLab avec un dépôt GitHub du m
 
 Usage:
   source venv/bin/activate
-  export GITLAB_TOKEN="..."
-  export GITHUB_PUSH_TOKEN="..."
   python configure_gitlab_github_mirrors.py
   python configure_gitlab_github_mirrors.py --apply
 
-Variables optionnelles:
-  GITLAB_BASE_URL   défaut: http://jeysrv12:8090
-  GITHUB_OWNER      défaut: jeyriku
-  GITHUB_USERNAME   défaut: jeyriku
-    GITHUB_NEW_REPOS_PRIVATE défaut: false
+Les identifiants (GITLAB_TOKEN, GITHUB_PUSH_TOKEN) sont chargés depuis jeyriku-vault.
+En environnement CI, définir VAULT_MASTER_PASSWORD.
+
+Variables optionnelles (non-sensibles) :
+  GITLAB_BASE_URL          défaut: http://jeysrv12:8090
+  GITHUB_OWNER             défaut: jeyriku
+  GITHUB_USERNAME          défaut: jeyriku
+  GITHUB_NEW_REPOS_PRIVATE défaut: false
 """
 
 from __future__ import annotations
@@ -29,12 +30,36 @@ import urllib.parse
 import urllib.request
 
 GITLAB_BASE_URL = os.getenv("GITLAB_BASE_URL", "http://jeysrv12:8090").rstrip("/")
-GITLAB_TOKEN = os.getenv("GITLAB_TOKEN", "")
 GITHUB_OWNER = os.getenv("GITHUB_OWNER", "jeyriku")
 GITHUB_USERNAME = os.getenv("GITHUB_USERNAME", "jeyriku")
-GITHUB_PUSH_TOKEN = os.getenv("GITHUB_PUSH_TOKEN", "")
 GITHUB_NEW_REPOS_PRIVATE = os.getenv("GITHUB_NEW_REPOS_PRIVATE", "false").lower() == "true"
 TIMEOUT = 20
+
+
+def _load_credentials() -> tuple[str, str]:
+    """Charge les identifiants depuis jeyriku-vault."""
+    from jeyriku_vault import VaultManager
+    vault = VaultManager()
+    if not vault.is_initialized():
+        raise SystemExit("Vault non initialisé. Lancez 'jeyriku-vault init' d'abord.")
+    vault.unlock(os.getenv("VAULT_MASTER_PASSWORD"))
+    try:
+        gitlab_token = ""
+        github_push_token = ""
+        try:
+            gitlab_token = vault.get_credential("gitlab").token or ""
+        except Exception:
+            pass
+        try:
+            github_push_token = vault.get_credential("github").token or ""
+        except Exception:
+            pass
+        return gitlab_token, github_push_token
+    finally:
+        vault.lock()
+
+
+GITLAB_TOKEN, GITHUB_PUSH_TOKEN = _load_credentials()
 
 
 def fetch_json(url: str, headers: dict[str, str] | None = None, data: bytes | None = None, method: str | None = None):
