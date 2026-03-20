@@ -1,14 +1,129 @@
-stages:
-  - verify
+# Pipeline CI/CD GitLab pour check-repos
+# Publie sur Nexus et exécute la vérification de synchronisation
 
 variables:
   PYTHON_VERSION: "3.11"
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  NEXUS_PYPI_URL: "http://jeysrv12:8081/repository/pypi-releases/"
 
 cache:
   paths:
     - .cache/pip
 
+stages:
+  - build
+  - publish
+  - verify
+
+.python_template: &python_template
+  image: python:${PYTHON_VERSION}-slim
+  before_script:
+    - python -V
+    - pip install --upgrade pip
+
+# ========================================
+# STAGE 1: Build du package
+# ========================================
+build:package:
+  <<: *python_template
+  stage: build
+  script:
+    - pip install build
+    - echo "Build du package check-repos..."
+    - |
+      CURRENT_VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+      BASE=$(echo "$CURRENT_VERSION" | cut -d. -f1,2)
+      NEXUS_LATEST_PATCH=$(curl -sf \
+        "http://jeysrv12:8081/repository/pypi-releases/simple/check-repos/" \
+        2>/dev/null | python3 -c \
+        "import sys,re;html=sys.stdin.read();p=[int(m.group(1)) for m in re.finditer(r'check[-_]repos-\\d+\\.\\d+\\.(\\d+)', html)];print(max(p) if p else -1)" \
+        2>/dev/null || echo "-1")
+      if [ "$NEXUS_LATEST_PATCH" = "-1" ]; then
+        NEW_VERSION="${BASE}.${CI_PIPELINE_IID}"
+        echo "Nexus injoignable ou package absent — version: ${NEW_VERSION}"
+      else
+        NEW_VERSION="${BASE}.$((NEXUS_LATEST_PATCH + 1))"
+        echo "Derniere version Nexus: ${BASE}.${NEXUS_LATEST_PATCH} -> Nouvelle: ${NEW_VERSION}"
+      fi
+      sed -i "s/^version = \".*\"/version = \"${NEW_VERSION}\"/" pyproject.toml
+      echo "Version finale: $(grep '^version = ' pyproject.toml)"
+    - python -m build
+    - ls -lh dist/
+  artifacts:
+    paths:
+      - dist/
+      - pyproject.toml
+    expire_in: 1 week
+  only:
+    - main
+    - master
+
+# ========================================
+# STAGE 2: Publication vers Nexus
+# ========================================
+publish:nexus:
+  <<: *python_template
+  stage: publish
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq git
+    - python -V
+    - pip install --upgrade pip build twine
+    - pip install git+http://jeysrv12:8090/jeyriku/jeyriku-vault.git -q
+    - mkdir -p ~/.jeyriku
+    - printf '%s' "$VAULT_ENC" | base64 -d > ~/.jeyriku/vault.enc
+  script:
+    - echo "Publication check-repos vers Nexus PyPI Repository..."
+    - |
+      python3 -c "
+      import os
+      from jeyriku_vault import VaultManager
+      vm = VaultManager(backend='encrypted_file')
+      vm.unlock(os.environ['VAULT_MASTER_PASSWORD'])
+      cred = vm.get_credential('nexus')
+      content = '[distutils]\nindex-servers = nexus\n\n[nexus]\nrepository: {}\nusername: {}\npassword: {}\n'.format(os.environ['NEXUS_PYPI_URL'], cred.username, cred.password)
+      open(os.path.expanduser('~/.pypirc'), 'w').write(content)
+      print('✅ .pypirc créé')
+      "
+    - chmod 600 ~/.pypirc
+    - twine upload --repository nexus dist/* --verbose
+    - echo "check-repos publié sur Nexus!"
+    - |
+      set +e
+      GITLAB_PUSH_TOKEN=$(python3 -c "
+import os
+from jeyriku_vault import VaultManager
+vm = VaultManager(backend='encrypted_file')
+vm.unlock(os.environ['VAULT_MASTER_PASSWORD'])
+print(vm.get_credential('gitlab').token)
+" 2>/dev/null)
+      if [ -z "${GITLAB_PUSH_TOKEN}" ]; then
+        echo "token vault indisponible — commit-retour ignoré"
+      else
+        NEW_VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+        git config user.email "ci@jeyriku.net"
+        git config user.name "GitLab CI"
+        git remote set-url origin "http://jeyriku:${GITLAB_PUSH_TOKEN}@jeysrv12:8090/jeyriku/check_repos.git"
+        git fetch origin main
+        git checkout -f main
+        git pull origin main --rebase
+        sed -i "s/^version = \".*\"/version = \"${NEW_VERSION}\"/" pyproject.toml
+        git add pyproject.toml
+        git diff --cached --quiet && echo "Rien à commiter" || git commit -m "chore: bump version to ${NEW_VERSION} [skip ci]"
+        git push origin main && echo "Commit-retour OK (${NEW_VERSION})" || echo "Push commit-retour échoué (non bloquant)"
+        git tag "${NEW_VERSION}" 2>/dev/null || echo "Tag déjà existant"
+        git push origin "${NEW_VERSION}" && echo "Tag ${NEW_VERSION} créé" || echo "Push tag échoué (non bloquant)"
+      fi
+      set -e
+  dependencies:
+    - build:package
+  only:
+    - main
+    - master
+  when: on_success
+
+# ========================================
+# STAGE 3: Vérification de synchronisation
+# ========================================
 verify:sync:
   stage: verify
   image: python:${PYTHON_VERSION}-slim
@@ -18,7 +133,7 @@ verify:sync:
     - pip install git+http://jeysrv12:8090/jeyriku/jeyriku-vault.git
   script:
     - pip install -e .
-    - check-repos --include-all-gitlab-projects --exclude-apps jeyapp,check_repos --check-tags --check-mirrors --json-out report.json --csv-out report.csv
+    - check-repos --include-all-gitlab-projects --exclude-apps check_repos --check-tags --check-mirrors --json-out report.json --csv-out report.csv
   artifacts:
     when: always
     paths:
