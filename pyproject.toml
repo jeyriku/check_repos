@@ -9,7 +9,7 @@ description = "Vérifie la synchronisation de version entre GitLab, GitHub et Ne
 authors = [{name = "Jeremie Rouzet", email = "contact@jeyriku.net"}]
 requires-python = ">=3.9"
 dependencies = [
-    "jeyriku-vault",
+    "jeyriku-vault @ git+http://jeysrv12:8090/jeyriku/jeyriku-vault.git",
 ]
 
 [project.scripts]

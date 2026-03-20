@@ -14,7 +14,7 @@ verify:sync:
   image: python:${PYTHON_VERSION}-slim
   before_script:
     - python -V
-    - pip install jeyriku-vault
+    - pip install git+http://jeysrv12:8090/jeyriku/jeyriku-vault.git
   script:
     - pip install -e .
     - check-repos --include-all-gitlab-projects --exclude-apps jeyapp --check-tags --check-mirrors --json-out report.json --csv-out report.csv
