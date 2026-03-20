@@ -14,14 +14,32 @@ class Credentials:
     nexus_password: str
 
 
+def _load_from_env() -> Credentials:
+    """Charge les identifiants depuis les variables d'environnement (mode CI)."""
+    return Credentials(
+        gitlab_token=os.getenv("GITLAB_TOKEN", ""),
+        github_token=os.getenv("GITHUB_TOKEN", ""),
+        nexus_username=os.getenv("NEXUS_USERNAME", ""),
+        nexus_password=os.getenv("NEXUS_PASSWORD", ""),
+    )
+
+
 def load() -> Credentials:
-    """Ouvre le vault, récupère tous les identifiants et le referme."""
+    """Ouvre le vault, récupère tous les identifiants et le referme.
+
+    Si le vault n'est pas disponible (mode CI), utilise les variables
+    d'environnement GITLAB_TOKEN, GITHUB_TOKEN, NEXUS_USERNAME, NEXUS_PASSWORD.
+    """
     from jeyriku_vault import VaultManager
 
-    vault = VaultManager(backend="encrypted_file")
-    if not vault.is_initialized():
-        raise SystemExit("Vault non initialisé. Lancez 'jeyriku-vault init' d'abord.")
-    vault.unlock(os.getenv("VAULT_MASTER_PASSWORD"))
+    try:
+        vault = VaultManager(backend="encrypted_file")
+        if not vault.is_initialized():
+            return _load_from_env()
+        vault.unlock(os.getenv("VAULT_MASTER_PASSWORD"))
+    except Exception:
+        return _load_from_env()
+
     try:
         gitlab_token = ""
         github_token = ""
