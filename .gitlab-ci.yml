@@ -18,7 +18,7 @@ verify:sync:
     - pip install git+http://jeysrv12:8090/jeyriku/jeyriku-vault.git
   script:
     - pip install -e .
-    - check-repos --include-all-gitlab-projects --exclude-apps jeyapp --check-tags --check-mirrors --json-out report.json --csv-out report.csv
+    - check-repos --include-all-gitlab-projects --exclude-apps jeyapp,check_repos --check-tags --check-mirrors --json-out report.json --csv-out report.csv
   artifacts:
     when: always
     paths:
