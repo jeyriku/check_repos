@@ -13,6 +13,7 @@ verify:sync:
   stage: verify
   image: python:${PYTHON_VERSION}-slim
   before_script:
+    - apt-get update -qq && apt-get install -y -qq git
     - python -V
     - pip install git+http://jeysrv12:8090/jeyriku/jeyriku-vault.git
   script:
